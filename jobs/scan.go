@@ -69,7 +69,7 @@ func (s *Scanner) PerformScan(job *models.ScanJob, req *models.ScanRequest) {
 	start_time := time.Now()
 	for _, path := range req.Paths {
 		log.Printf("Scanning path: %s", path)
-		filepath.WalkDir(path, func(path string, d fs.DirEntry, err error) error {
+		err := filepath.WalkDir(path, func(path string, d fs.DirEntry, err error) error {
 			if err != nil {
 				log.Printf("Failed to walk directory %s: %v", path, err) // Continue for other paths
 				err = nil
@@ -129,19 +129,28 @@ func (s *Scanner) PerformScan(job *models.ScanJob, req *models.ScanRequest) {
 					existing, err := s.Service.GetScanEntry(entry.EntryID)
 					if err != nil {
 						if errors.Is(err, gorm.ErrRecordNotFound) {
-							s.Service.CreateScanEntry(entry)
+							err = s.Service.CreateScanEntry(entry)
+							if err != nil {
+								return fmt.Errorf("failed to create scan entry %s: %w", entry.EntryID, err)
+							}
 						} else {
 							return fmt.Errorf("failed to get scan entry %s: %w", entry.EntryID, err)
 						}
 					} else {
 						// Update existing entry if already exists
-						s.Service.UpdateScanEntry(existing)
+						err = s.Service.UpdateScanEntry(existing)
+						if err != nil {
+							return fmt.Errorf("failed to update scan entry %s: %w", entry.EntryID, err)
+						}
 					}
 					job.Match = append(job.Match, *entry)
 				}
 			}
 			return nil
 		})
+		if err != nil {
+			log.Printf("Failed to scan directory %s: %v", path, err)
+		}
 	}
 	duration := time.Since(start_time)
 	log.Printf("Scan completed for job %s in %s", job.JobID, duration)

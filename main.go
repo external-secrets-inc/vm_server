@@ -1,7 +1,11 @@
 package main
 
 import (
+	"crypto/tls"
+	"crypto/x509"
+	"flag"
 	"log"
+	"os"
 	scanHandler "vm-server/handlers/scan"
 	"vm-server/handlers/secrets"
 	"vm-server/jobs"
@@ -14,6 +18,13 @@ import (
 )
 
 func main() {
+	// Command-line flags for TLS files
+	caFile := flag.String("ca-file", "", "Path to the CA certificate file")
+	certFile := flag.String("cert-file", "", "Path to the server certificate file")
+	keyFile := flag.String("key-file", "", "Path to the server key file")
+	port := flag.String("port", "1323", "Port for the server to listen on")
+	flag.Parse()
+
 	// Initialize data store
 	dbStore, err := store.NewStore()
 	if err != nil {
@@ -54,6 +65,28 @@ func main() {
 	// Secrets routes
 	apiV1.POST("/secrets/:id/version", secretHdlr.CreateSecretVersionHandler)
 
-	// Start server
-	e.Logger.Fatal(e.Start(":1323"))
+	// Configure mTLS
+	if *caFile != "" && *certFile != "" && *keyFile != "" {
+		caCert, err := os.ReadFile(*caFile)
+		if err != nil {
+			log.Fatalf("Failed to read CA certificate: %v", err)
+		}
+		caCertPool := x509.NewCertPool()
+		caCertPool.AppendCertsFromPEM(caCert)
+
+		tlsConfig := &tls.Config{
+			ClientCAs:  caCertPool,
+			ClientAuth: tls.RequireAndVerifyClientCert,
+			MinVersion: tls.VersionTLS12,
+		}
+
+		e.Server.TLSConfig = tlsConfig
+		addr := ":" + *port
+		// Start server with TLS
+		e.Logger.Fatal(e.StartTLS(addr, *certFile, *keyFile))
+	} else {
+		addr := ":" + *port
+		// Start server without TLS
+		e.Logger.Fatal(e.Start(addr))
+	}
 }
