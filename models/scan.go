@@ -59,7 +59,8 @@ type ScanJob struct {
 
 type SliceMatch []ScanMatchResumed
 type ScanMatchResumed struct {
-	EntryID string `json:"entryId"`
+	Key      string `json:"key"`
+	Property string `json:"property"`
 }
 
 // Value implements the driver.Valuer interface, converting the slice to a JSON string.

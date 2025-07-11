@@ -26,7 +26,7 @@ func (h *Handler) CreateSecretVersionHandler(c echo.Context) error {
 	if err := c.Bind(&req); err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid request payload"})
 	}
-	entry, err := h.Scanner.GetScanEntry(id)
+	entry, err := h.Scanner.GetScanEntryByFingerprint(id)
 	if err != nil {
 		return c.JSON(http.StatusNotFound, map[string]string{"error": "Scan entry not found"})
 	}

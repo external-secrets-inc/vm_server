@@ -115,7 +115,7 @@ func (s *Scanner) PerformScan(job *models.ScanJob, req *models.ScanRequest) {
 				if err != nil {
 					log.Printf("failed to create scan entry %s: %v", entry.EntryID, err)
 				} else {
-					job.Match = append(job.Match, models.ScanMatchResumed{EntryID: entry.EntryID})
+					job.Match = append(job.Match, models.ScanMatchResumed{Key: entry.FilePath, Property: fmt.Sprintf("%d:%d", entry.StartLine, entry.EndLine)})
 				}
 			} else {
 				log.Printf("failed to get scan entry %s: %v", entry.EntryID, err)
@@ -126,7 +126,7 @@ func (s *Scanner) PerformScan(job *models.ScanJob, req *models.ScanRequest) {
 			if err != nil {
 				log.Printf("failed to update scan entry %s: %v", entry.EntryID, err)
 			} else {
-				job.Match = append(job.Match, models.ScanMatchResumed{EntryID: existing.EntryID})
+				job.Match = append(job.Match, models.ScanMatchResumed{Key: existing.FilePath, Property: fmt.Sprintf("%d:%d", existing.StartLine, existing.EndLine)})
 			}
 		}
 	}
