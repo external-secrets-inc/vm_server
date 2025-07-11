@@ -2,16 +2,16 @@ package scan
 
 import (
 	"vm-server/models"
-	"vm-server/store"
+	"vm-server/store/schema"
 )
 
 // Service is the business logic layer for scans.
 type Service struct {
-	Store *store.Store
+	Store schema.Store
 }
 
 // NewService creates a new scan service.
-func NewService(s *store.Store) *Service {
+func NewService(s schema.Store) *Service {
 	return &Service{Store: s}
 }
 
@@ -35,6 +35,11 @@ func (s *Service) CreateScanEntry(scanEntry *models.ScanEntry) error {
 // GetScanEntry retrieves a scan entry by its EntryID.
 func (s *Service) GetScanEntry(entryID string) (*models.ScanEntry, error) {
 	return s.Store.GetScanEntry(entryID)
+}
+
+// GetScanEntry retrieves a scan entry by its EntryID.
+func (s *Service) GetScanEntryByFingerprint(fingerprint string) (*models.ScanEntry, error) {
+	return s.Store.GetScanEntryByFingerprint(fingerprint)
 }
 
 // UpdateScanEntry updates an existing scan entry.

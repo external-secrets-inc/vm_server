@@ -11,7 +11,7 @@ import (
 	"vm-server/jobs"
 	scanService "vm-server/services/scan"
 	secretsvc "vm-server/services/secrets"
-	"vm-server/store"
+	memory "vm-server/store/memory"
 
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
@@ -26,13 +26,18 @@ func main() {
 	flag.Parse()
 
 	// Initialize data store
-	dbStore, err := store.NewStore()
+	store, err := memory.NewStore()
 	if err != nil {
 		log.Fatalf("Failed to initialize store: %v", err)
 	}
-
+	/* for gorm db on sqlite
+	store, err := gorm.NewStore()
+	if err != nil {
+		log.Fatalf("Failed to initialize store: %v", err)
+	}
+	*/
 	// Initialize services
-	scanSvc := scanService.NewService(dbStore)
+	scanSvc := scanService.NewService(store)
 
 	// Initialize services
 	secretsSvc := secretsvc.NewService(scanSvc)
@@ -52,7 +57,7 @@ func main() {
 	e := echo.New()
 
 	// Middleware
-	e.Use(middleware.Logger())
+	// e.Use(middleware.Logger())
 	e.Use(middleware.Recover())
 
 	// Routes

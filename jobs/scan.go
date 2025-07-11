@@ -15,7 +15,7 @@ import (
 	"vm-server/models"
 	scanService "vm-server/services/scan"
 
-	"gorm.io/gorm"
+	"github.com/google/uuid"
 )
 
 // Scanner defines the structure for our scanning job runner.
@@ -99,9 +99,11 @@ func (s *Scanner) PerformScan(job *models.ScanJob, req *models.ScanRequest) {
 				matches := re.FindAllIndex(content, -1)
 				for _, match := range matches {
 					idx := fmt.Sprintf("%v@%v:%v", path, match[0], match[1])
-					entryId := sha3.New224().Sum([]byte(idx))
+					fingerprint := sha3.New224().Sum([]byte(idx))
+					id := uuid.New().String()
 					entry := models.ScanEntry{
-						EntryID:        fmt.Sprintf("%x", entryId),
+						EntryID:        id,
+						Fingerprint:    fmt.Sprintf("%x", fingerprint),
 						FilePath:       path,
 						MatchedRegexes: models.StringSlice{regex},
 						StartLine:      match[0],
@@ -124,11 +126,12 @@ func (s *Scanner) PerformScan(job *models.ScanJob, req *models.ScanRequest) {
 			// According to the threshold criteria. We just need to filter them
 			// To properly create/update scan entries.
 			for idx, count := range matchCount {
+				log.Printf("DEBUG: File %s[%v:%v] passed threshold criteria", entries[idx].FilePath, entries[idx].StartLine, entries[idx].EndLine)
 				if count >= req.Threshold {
 					entry := entries[idx]
-					existing, err := s.Service.GetScanEntry(entry.EntryID)
+					existing, err := s.Service.GetScanEntryByFingerprint(entry.Fingerprint)
 					if err != nil {
-						if errors.Is(err, gorm.ErrRecordNotFound) {
+						if errors.Is(err, &models.NotFoundErr{}) {
 							err = s.Service.CreateScanEntry(entry)
 							if err != nil {
 								return fmt.Errorf("failed to create scan entry %s: %w", entry.EntryID, err)
@@ -143,7 +146,7 @@ func (s *Scanner) PerformScan(job *models.ScanJob, req *models.ScanRequest) {
 							return fmt.Errorf("failed to update scan entry %s: %w", entry.EntryID, err)
 						}
 					}
-					job.Match = append(job.Match, *entry)
+					job.Match = append(job.Match, models.ScanMatchResumed{EntryID: entry.EntryID})
 				}
 			}
 			return nil
