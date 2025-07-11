@@ -1,7 +1,6 @@
 package jobs
 
 import (
-	"bytes"
 	"crypto/sha3"
 	"errors"
 	"fmt"
@@ -10,6 +9,9 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
+	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 	"vm-server/models"
@@ -17,6 +19,9 @@ import (
 
 	"github.com/google/uuid"
 )
+
+const startingChars = " \t'\"="
+const endingChars = " \t\n'\""
 
 // Scanner defines the structure for our scanning job runner.
 type Scanner struct {
@@ -67,92 +72,62 @@ func (s *Scanner) PerformScan(job *models.ScanJob, req *models.ScanRequest) {
 		return
 	}
 	start_time := time.Now()
-	for _, path := range req.Paths {
-		log.Printf("Scanning path: %s", path)
-		err := filepath.WalkDir(path, func(path string, d fs.DirEntry, err error) error {
-			if err != nil {
-				log.Printf("Failed to walk directory %s: %v", path, err) // Continue for other paths
-				err = nil
-				return err
-			}
-			if !d.Type().IsRegular() {
-				return nil
-			}
-			if d.IsDir() {
-				return nil
-			}
-			content, err := os.ReadFile(path)
-			if err != nil {
-				return fmt.Errorf("failed to read file %s: %w", path, err)
-			}
-			// Check if file content is binary
-			if !isText(content) {
-				return nil
-			}
-			entries := map[string]*models.ScanEntry{}
-			matchCount := map[string]int{}
-			for _, regex := range req.Regexes {
-				re, err := regexp.Compile(regex)
-				if err != nil {
-					return fmt.Errorf("failed to compile regex %s: %w", regex, err)
-				}
-				matches := re.FindAllIndex(content, -1)
-				for _, match := range matches {
-					idx := fmt.Sprintf("%v@%v:%v", path, match[0], match[1])
-					fingerprint := sha3.New224().Sum([]byte(idx))
-					id := uuid.New().String()
-					entry := models.ScanEntry{
-						EntryID:        id,
-						Fingerprint:    fmt.Sprintf("%x", fingerprint),
-						FilePath:       path,
-						MatchedRegexes: models.StringSlice{regex},
-						StartLine:      match[0],
-						EndLine:        match[1],
-						ScanJobID:      job.ID,
-					}
-					matchCount[idx]++
-					if existing, ok := entries[idx]; ok {
-						// Update entry to include matched Regex
-						existing.MatchedRegexes = append(existing.MatchedRegexes, regex)
-						entries[idx] = existing
-					} else {
-						// Create a new  entry
-						entries[idx] = &entry
-					}
-				}
+	filesToScan := make(chan string)
+	var wg sync.WaitGroup
+	results := make(chan *models.ScanEntry, 100) // Buffer the channel
 
-			}
-			// Now here, entries contain a list of all scan Entries that might have enough matches
-			// According to the threshold criteria. We just need to filter them
-			// To properly create/update scan entries.
-			for idx, count := range matchCount {
-				log.Printf("DEBUG: File %s[%v:%v] passed threshold criteria", entries[idx].FilePath, entries[idx].StartLine, entries[idx].EndLine)
-				if count >= req.Threshold {
-					entry := entries[idx]
-					existing, err := s.Service.GetScanEntryByFingerprint(entry.Fingerprint)
-					if err != nil {
-						if errors.Is(err, &models.NotFoundErr{}) {
-							err = s.Service.CreateScanEntry(entry)
-							if err != nil {
-								return fmt.Errorf("failed to create scan entry %s: %w", entry.EntryID, err)
-							}
-						} else {
-							return fmt.Errorf("failed to get scan entry %s: %w", entry.EntryID, err)
-						}
-					} else {
-						// Update existing entry if already exists
-						err = s.Service.UpdateScanEntry(existing)
-						if err != nil {
-							return fmt.Errorf("failed to update scan entry %s: %w", entry.EntryID, err)
-						}
-					}
+	// Start worker pool
+	numWorkers := runtime.NumCPU()
+	for i := 0; i < numWorkers; i++ {
+		wg.Add(1)
+		go s.scanWorker(&wg, filesToScan, results, req.Regexes, req.Threshold, job.ID)
+	}
+
+	// Collect file paths
+	go func() {
+		for _, path := range req.Paths {
+			filepath.WalkDir(path, func(path string, d fs.DirEntry, err error) error {
+				if err != nil {
+					log.Printf("Failed to walk directory %s: %v", path, err)
+					return nil // Continue walking
+				}
+				if !d.IsDir() && d.Type().IsRegular() {
+					filesToScan <- path
+				}
+				return nil
+			})
+		}
+		close(filesToScan)
+	}()
+
+	// Wait for all workers to finish
+	go func() {
+		wg.Wait()
+		close(results)
+	}()
+
+	// Process results
+	for entry := range results {
+		existing, err := s.Service.GetScanEntryByFingerprint(entry.Fingerprint)
+		if err != nil {
+			if errors.Is(err, &models.NotFoundErr{}) {
+				err = s.Service.CreateScanEntry(entry)
+				if err != nil {
+					log.Printf("failed to create scan entry %s: %v", entry.EntryID, err)
+				} else {
 					job.Match = append(job.Match, models.ScanMatchResumed{EntryID: entry.EntryID})
 				}
+			} else {
+				log.Printf("failed to get scan entry %s: %v", entry.EntryID, err)
 			}
-			return nil
-		})
-		if err != nil {
-			log.Printf("Failed to scan directory %s: %v", path, err)
+		} else {
+			// Update existing entry if it already exists
+			err = s.Service.UpdateScanEntry(existing)
+			if err != nil {
+				log.Printf("failed to update scan entry %s: %v", entry.EntryID, err)
+			} else {
+				job.Match = append(job.Match, models.ScanMatchResumed{EntryID: existing.EntryID})
+			}
 		}
 	}
 	duration := time.Since(start_time)
@@ -165,15 +140,69 @@ func (s *Scanner) PerformScan(job *models.ScanJob, req *models.ScanRequest) {
 	}
 }
 
-// isText checks if content is text by looking for null bytes and validating UTF-8.
-func isText(content []byte) bool {
-	if len(content) == 0 {
-		return true
+func isText(s []byte) bool {
+	n := 1024
+	if len(s) < n {
+		n = len(s)
 	}
-	// A single null byte is a strong indicator of a binary file.
-	if bytes.Contains(content, []byte{0}) {
-		return false
+	return utf8.Valid(s[:n])
+}
+
+func (s *Scanner) scanWorker(wg *sync.WaitGroup, files <-chan string, results chan<- *models.ScanEntry, regexes []string, threshold int, jobID uint) {
+	defer wg.Done()
+	for path := range files {
+		content, err := os.ReadFile(path)
+		if err != nil {
+			log.Printf("failed to read file %s: %v", path, err)
+			continue
+		}
+
+		if !isText(content) {
+			continue
+		}
+
+		entries := make(map[string]*models.ScanEntry)
+		matchCount := make(map[string]int)
+
+		for _, regex := range regexes {
+			re, err := regexp.Compile(regex)
+			if err != nil {
+				log.Printf("failed to compile regex %s: %v", regex, err)
+				continue
+			}
+
+			matches := re.FindAllIndex(content, -1)
+			for _, match := range matches {
+				if (match[0] != 0 && !strings.ContainsRune(startingChars, rune(content[match[0]-1]))) ||
+					(match[1] != len(content) && !strings.ContainsRune(endingChars, rune(content[match[1]]))) {
+					continue
+				}
+
+				idx := fmt.Sprintf("%v@%v:%v", path, match[0], match[1])
+				fingerprint := sha3.New224().Sum([]byte(idx))
+				id := uuid.New().String()
+
+				if existing, ok := entries[idx]; ok {
+					existing.MatchedRegexes = append(existing.MatchedRegexes, regex)
+				} else {
+					entries[idx] = &models.ScanEntry{
+						EntryID:        id,
+						Fingerprint:    fmt.Sprintf("%x", fingerprint),
+						FilePath:       path,
+						MatchedRegexes: models.StringSlice{regex},
+						StartLine:      match[0],
+						EndLine:        match[1],
+						ScanJobID:      jobID,
+					}
+				}
+				matchCount[idx]++
+			}
+		}
+
+		for idx, count := range matchCount {
+			if count >= threshold {
+				results <- entries[idx]
+			}
+		}
 	}
-	// Check if the file is valid UTF-8.
-	return utf8.Valid(content)
 }
