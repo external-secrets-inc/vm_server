@@ -40,7 +40,7 @@ func (s *Service) UpdateVersion(newValue []byte, entry *models.ScanEntry) error 
 		return err
 	}
 	// Update Scan Entry
-	entry.EndLine = entry.StartLine + len(newValue)
+	entry.EndLine = entry.StartLine + len(newValue) - 1
 	err = s.scanService.UpdateScanEntry(entry)
 	if err != nil {
 		return err
