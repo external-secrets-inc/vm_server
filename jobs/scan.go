@@ -20,8 +20,8 @@ import (
 	"github.com/google/uuid"
 )
 
-const startingChars = " \t'\"="
-const endingChars = " \t\n'\""
+const startingChars = " \t'\"=:"
+const endingChars = " \t\n'\":"
 
 // Scanner defines the structure for our scanning job runner.
 type Scanner struct {
