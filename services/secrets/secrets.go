@@ -32,7 +32,7 @@ func (s *Service) UpdateVersion(newValue []byte, entry *models.ScanEntry) error 
 	fmt.Printf("New modFile before start: %v\n", string(modFile[:entry.StartLine]))
 	copy(modFile[entry.StartLine:entry.StartLine+len(newValue)], newValue)
 	fmt.Printf("New modFile up until beginning: %v\n", string(modFile[:entry.StartLine+len(newValue)]))
-	copy(modFile[entry.StartLine+len(newValue):], file[entry.EndLine:])
+	copy(modFile[entry.StartLine+len(newValue):], file[entry.EndLine+1:])
 	fmt.Printf("New modFile after end: %v\n", string(modFile))
 	return os.WriteFile(entry.FilePath, modFile, 0644)
 }
