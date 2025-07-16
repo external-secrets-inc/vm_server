@@ -178,7 +178,7 @@ func (s *Scanner) scanWorker(wg *sync.WaitGroup, files <-chan string, results ch
 					continue
 				}
 
-				idx := fmt.Sprintf("%v@%v:%v", path, match[0], match[1])
+				idx := fmt.Sprintf("%v@%v:%v", path, match[0], match[1]-1)
 				fingerprint := sha3.New224().Sum([]byte(idx))
 				id := uuid.New().String()
 
@@ -191,7 +191,7 @@ func (s *Scanner) scanWorker(wg *sync.WaitGroup, files <-chan string, results ch
 						FilePath:       path,
 						MatchedRegexes: models.StringSlice{regex},
 						StartLine:      match[0],
-						EndLine:        match[1],
+						EndLine:        match[1] - 1,
 						ScanJobID:      jobID,
 					}
 				}
