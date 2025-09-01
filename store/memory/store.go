@@ -11,6 +11,8 @@ import (
 
 const MAX_SCAN_JOB_SIZE = 1000
 const MAX_SCAN_ENTRY_SIZE = 10000
+const MAX_CONSUMER_JOB_SIZE = 1000
+const MAX_CONSUMER_ENTRY_SIZE = 10000
 
 const CLEANUP_TO = 0.8
 
@@ -21,6 +23,10 @@ type StoreMemory struct {
 	scanJobs               map[uuid.UUID]*models.ScanJob
 	scanEntries            map[uuid.UUID]*models.ScanEntry
 	scanEntriesFingerprint map[string]uuid.UUID
+	consumerJobAge         map[uuid.UUID]time.Time
+	consumerJobs           map[uuid.UUID]*models.ConsumerJob
+	consumerEntryAge       map[uuid.UUID]time.Time
+	consumerEntries        map[uuid.UUID]*models.ConsumerEntry
 	mu                     sync.RWMutex
 }
 
@@ -32,6 +38,10 @@ func NewStore() (schema.Store, error) {
 		scanEntriesFingerprint: make(map[string]uuid.UUID),
 		scanJobAge:             make(map[uuid.UUID]time.Time),
 		scanEntryAge:           make(map[uuid.UUID]time.Time),
+		consumerJobAge:         make(map[uuid.UUID]time.Time),
+		consumerJobs:           make(map[uuid.UUID]*models.ConsumerJob),
+		consumerEntryAge:       make(map[uuid.UUID]time.Time),
+		consumerEntries:        make(map[uuid.UUID]*models.ConsumerEntry),
 	}, nil
 }
 
@@ -242,4 +252,198 @@ func (s *StoreMemory) ListScanEntries() ([]models.ScanEntry, error) {
 		scanEntries = append(scanEntries, *scanEntry)
 	}
 	return scanEntries, nil
+}
+
+// Consumer Job
+func (s *StoreMemory) CreateConsumerJob(consumerJob *models.ConsumerJob) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.consumerJobs) >= MAX_SCAN_JOB_SIZE {
+		s.cleanupConsumerJobs()
+	}
+	uuid, err := uuid.Parse(consumerJob.JobID)
+	if err != nil {
+		return err
+	}
+	if _, ok := s.consumerJobs[uuid]; ok {
+		return &models.AlreadyExistErr{}
+	}
+	s.consumerJobs[uuid] = consumerJob
+	s.consumerJobAge[uuid] = time.Now()
+	return nil
+}
+
+func (s *StoreMemory) GetConsumerJob(id string) (*models.ConsumerJob, error) {
+	s.mu.RLock()
+	uuid, err := uuid.Parse(id)
+	if err != nil {
+		s.mu.RUnlock()
+		return nil, err
+	}
+	consumerJob, ok := s.consumerJobs[uuid]
+	if !ok {
+		s.mu.RUnlock()
+		return nil, &models.NotFoundErr{}
+	}
+	s.mu.RUnlock()
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.consumerJobAge[uuid] = time.Now()
+	return consumerJob, nil
+}
+
+func (s *StoreMemory) UpdateConsumerJob(consumerJob *models.ConsumerJob) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	uuid, err := uuid.Parse(consumerJob.JobID)
+	if err != nil {
+		return err
+	}
+	if _, ok := s.consumerJobs[uuid]; !ok {
+		return &models.NotFoundErr{}
+	}
+	s.consumerJobs[uuid] = consumerJob
+	s.consumerJobAge[uuid] = time.Now()
+	return nil
+}
+
+func (s *StoreMemory) DeleteConsumerJob(consumerJob *models.ConsumerJob) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	uuid, err := uuid.Parse(consumerJob.JobID)
+	if err != nil {
+		return err
+	}
+	if _, ok := s.consumerJobs[uuid]; !ok {
+		// Already deleted, operation ok
+		return nil
+	}
+	delete(s.consumerJobs, uuid)
+	delete(s.consumerJobAge, uuid)
+	return nil
+}
+
+// Consumer Entry
+func (s *StoreMemory) CreateConsumerEntry(consumerEntry *models.ConsumerEntry) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.consumerEntries) >= MAX_SCAN_ENTRY_SIZE {
+		s.cleanupConsumerEntries()
+	}
+	uuid, err := uuid.Parse(consumerEntry.EntryID)
+	if err != nil {
+		return err
+	}
+	if _, ok := s.consumerEntries[uuid]; ok {
+		return &models.AlreadyExistErr{}
+	}
+	s.consumerEntries[uuid] = consumerEntry
+	s.consumerEntryAge[uuid] = time.Now()
+	return nil
+}
+func (s *StoreMemory) cleanupConsumerEntries() {
+	targetSize := int(MAX_CONSUMER_ENTRY_SIZE * CLEANUP_TO)
+	for len(s.consumerEntries) > targetSize {
+		var oldestID uuid.UUID
+		var oldestTime time.Time
+		first := true
+		for id, t := range s.consumerEntryAge {
+			if first {
+				oldestTime = t
+				oldestID = id
+				first = false
+				continue
+			}
+			if t.Before(oldestTime) {
+				oldestTime = t
+				oldestID = id
+			}
+		}
+		delete(s.consumerEntries, oldestID)
+		delete(s.consumerEntryAge, oldestID)
+	}
+}
+
+func (s *StoreMemory) cleanupConsumerJobs() {
+	targetSize := int(MAX_CONSUMER_JOB_SIZE * CLEANUP_TO)
+	for len(s.consumerJobs) > targetSize {
+		var oldestID uuid.UUID
+		var oldestTime time.Time
+		first := true
+		for id, t := range s.consumerJobAge {
+			if first {
+				oldestTime = t
+				oldestID = id
+				first = false
+				continue
+			}
+			if t.Before(oldestTime) {
+				oldestTime = t
+				oldestID = id
+			}
+		}
+		delete(s.consumerEntries, oldestID)
+		delete(s.consumerEntryAge, oldestID)
+	}
+}
+func (s *StoreMemory) GetConsumerEntry(entryID string) (*models.ConsumerEntry, error) {
+	s.mu.RLock()
+	uuid, err := uuid.Parse(entryID)
+	if err != nil {
+		s.mu.RUnlock()
+		return nil, err
+	}
+	consumerEntry, ok := s.consumerEntries[uuid]
+	if !ok {
+		s.mu.RUnlock()
+		return nil, &models.NotFoundErr{}
+	}
+	s.mu.RUnlock()
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.consumerEntryAge[uuid] = time.Now()
+	return consumerEntry, nil
+}
+
+func (s *StoreMemory) UpdateConsumerEntry(consumerEntry *models.ConsumerEntry) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	uuid, err := uuid.Parse(consumerEntry.EntryID)
+	if err != nil {
+		return err
+	}
+	if _, ok := s.consumerEntries[uuid]; !ok {
+		return &models.NotFoundErr{}
+	}
+	s.consumerEntries[uuid] = consumerEntry
+	s.consumerEntryAge[uuid] = time.Now()
+	return nil
+}
+
+func (s *StoreMemory) DeleteConsumerEntry(consumerEntry *models.ConsumerEntry) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	uuid, err := uuid.Parse(consumerEntry.EntryID)
+	if err != nil {
+		return err
+	}
+	if _, ok := s.consumerEntries[uuid]; !ok {
+		// Already deleted, operation ok
+		return nil
+	}
+	delete(s.consumerEntries, uuid)
+	delete(s.consumerEntryAge, uuid)
+	return nil
+}
+
+func (s *StoreMemory) ListConsumerEntries() ([]models.ConsumerEntry, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var consumerEntries []models.ConsumerEntry
+	for _, consumerEntry := range s.consumerEntries {
+		consumerEntries = append(consumerEntries, *consumerEntry)
+	}
+	return consumerEntries, nil
 }

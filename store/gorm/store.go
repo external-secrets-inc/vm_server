@@ -27,7 +27,7 @@ func NewStore() (schema.Store, error) {
 	log.Println("Database connection established.")
 
 	// Auto-migrate the schema for ScanJob and ScanEntry models.
-	err = db.AutoMigrate(&models.ScanJob{}, &models.ScanEntry{})
+		err = db.AutoMigrate(&models.ScanJob{}, &models.ScanEntry{}, &models.ConsumerJob{}, &models.ConsumerEntry{})
 	if err != nil {
 		// Attempt to close the database connection if migration fails.
 		sqlDB, _ := db.DB()
@@ -112,4 +112,72 @@ func (s *StoreGorm) ListScanEntries() ([]models.ScanEntry, error) {
 	var scanEntries []models.ScanEntry
 	result := s.DB.Find(&scanEntries)
 	return scanEntries, result.Error
+}
+
+// Consumer Job
+func (s *StoreGorm) CreateConsumerJob(consumerJob *models.ConsumerJob) error {
+	result := s.DB.Create(consumerJob)
+	return result.Error
+}
+
+func (s *StoreGorm) GetConsumerJob(id string) (*models.ConsumerJob, error) {
+	var consumerJob models.ConsumerJob
+	result := s.DB.First(&consumerJob, "job_id = ?", id)
+	if result.Error != nil {
+		if errors.Is(result.Error, gorm.ErrRecordNotFound) {
+			return nil, &models.NotFoundErr{}
+		}
+		return nil, result.Error
+	}
+	return &consumerJob, nil
+}
+
+func (s *StoreGorm) UpdateConsumerJob(consumerJob *models.ConsumerJob) error {
+	result := s.DB.Save(consumerJob)
+	return result.Error
+}
+
+func (s *StoreGorm) DeleteConsumerJob(consumerJob *models.ConsumerJob) error {
+	result := s.DB.Delete(consumerJob)
+	return result.Error
+}
+
+func (s *StoreGorm) ListConsumerJobs() ([]models.ConsumerJob, error) {
+	var consumerJobs []models.ConsumerJob
+	result := s.DB.Find(&consumerJobs)
+	return consumerJobs, result.Error
+}
+
+// Consumer Entry
+func (s *StoreGorm) CreateConsumerEntry(consumerEntry *models.ConsumerEntry) error {
+	result := s.DB.Create(consumerEntry)
+	return result.Error
+}
+
+func (s *StoreGorm) GetConsumerEntry(entryID string) (*models.ConsumerEntry, error) {
+	var consumerEntry models.ConsumerEntry
+	result := s.DB.First(&consumerEntry, "entry_id = ?", entryID)
+	if result.Error != nil {
+		if errors.Is(result.Error, gorm.ErrRecordNotFound) {
+			return nil, &models.NotFoundErr{}
+		}
+		return nil, result.Error
+	}
+	return &consumerEntry, nil
+}
+
+func (s *StoreGorm) UpdateConsumerEntry(consumerEntry *models.ConsumerEntry) error {
+	result := s.DB.Save(consumerEntry)
+	return result.Error
+}
+
+func (s *StoreGorm) DeleteConsumerEntry(consumerEntry *models.ConsumerEntry) error {
+	result := s.DB.Delete(consumerEntry)
+	return result.Error
+}
+
+func (s *StoreGorm) ListConsumerEntries() ([]models.ConsumerEntry, error) {
+	var consumerEntries []models.ConsumerEntry
+	result := s.DB.Find(&consumerEntries)
+	return consumerEntries, result.Error
 }
