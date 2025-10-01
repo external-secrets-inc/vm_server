@@ -16,4 +16,8 @@ type Store interface {
 	UpdateScanEntry(scanEntry *models.ScanEntry) error
 	DeleteScanEntry(scanEntry *models.ScanEntry) error
 	ListScanEntries() ([]models.ScanEntry, error)
+
+	// Consumers
+	UpsertConsumer(consumer *models.Consumer) error
+	ListConsumers(filter *models.ConsumerFilter) ([]models.Consumer, error)
 }
