@@ -1,6 +1,7 @@
 package memory
 
 import (
+	"fmt"
 	"sync"
 	"time"
 	"vm-server/models"
@@ -22,6 +23,9 @@ type StoreMemory struct {
 	scanEntries            map[uuid.UUID]*models.ScanEntry
 	scanEntriesFingerprint map[string]uuid.UUID
 	mu                     sync.RWMutex
+
+	// consumers keyed by tuple
+	consumers map[string]*models.Consumer
 }
 
 // NewStore initializes the database connection and migrates the schema.
@@ -32,6 +36,7 @@ func NewStore() (schema.Store, error) {
 		scanEntriesFingerprint: make(map[string]uuid.UUID),
 		scanJobAge:             make(map[uuid.UUID]time.Time),
 		scanEntryAge:           make(map[uuid.UUID]time.Time),
+		consumers:              make(map[string]*models.Consumer),
 	}, nil
 }
 
@@ -242,4 +247,40 @@ func (s *StoreMemory) ListScanEntries() ([]models.ScanEntry, error) {
 		scanEntries = append(scanEntries, *scanEntry)
 	}
 	return scanEntries, nil
+}
+
+func consumerKey(c *models.Consumer) string {
+	return c.FilePath + "|" + c.Comm + "|" + c.Exe + "|" + fmt.Sprintf("%d|%d", c.RUID, c.EUID)
+}
+
+// UpsertConsumer stores or updates a consumer entry.
+func (s *StoreMemory) UpsertConsumer(consumer *models.Consumer) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	key := consumerKey(consumer)
+	if existing, ok := s.consumers[key]; ok {
+		existing.UpdatedAt = time.Now()
+		existing.Comm = consumer.Comm
+		existing.Exe = consumer.Exe
+		return nil
+	}
+	// Assign CreatedAt/UpdatedAt
+	now := time.Now()
+	consumer.CreatedAt = now
+	consumer.UpdatedAt = now
+	s.consumers[key] = consumer
+	return nil
+}
+
+func (s *StoreMemory) ListConsumers(filter *models.ConsumerFilter) ([]models.Consumer, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var out []models.Consumer
+	for _, v := range s.consumers {
+		if filter != nil && filter.FilePath != "" && v.FilePath != filter.FilePath {
+			continue
+		}
+		out = append(out, *v)
+	}
+	return out, nil
 }

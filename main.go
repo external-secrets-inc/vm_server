@@ -6,12 +6,16 @@ import (
 	"flag"
 	"log"
 	"os"
+	"os/signal"
+	"syscall"
+	consumersHandler "vm-server/handlers/consumers"
 	scanHandler "vm-server/handlers/scan"
 	"vm-server/handlers/secrets"
 	"vm-server/jobs"
 	scanService "vm-server/services/scan"
 	secretsvc "vm-server/services/secrets"
 	memory "vm-server/store/memory"
+	"vm-server/watcher"
 
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
@@ -23,6 +27,9 @@ func main() {
 	certFile := flag.String("cert-file", "", "Path to the server certificate file")
 	keyFile := flag.String("key-file", "", "Path to the server key file")
 	port := flag.String("port", "1323", "Port for the server to listen on")
+	watchEnable := flag.Bool("watch-enable", true, "Enable fanotify watcher (Linux only)")
+	watchMount := flag.Bool("watch-mount", false, "Use mount-wide marks for watcher")
+	watchVerbose := flag.Bool("watch-verbose", false, "Verbose watcher logging")
 	flag.Parse()
 
 	// Initialize data store
@@ -45,13 +52,27 @@ func main() {
 	// Initialize job runner
 	scanner := jobs.NewScanner(scanSvc)
 
+	// Initialize fanotify watcher (best-effort)
+	var watchMgr *watcher.Manager
+	if *watchEnable {
+		var werr error
+		watchMgr, werr = watcher.NewManager(scanSvc, watcher.Options{Mount: *watchMount, Verbose: *watchVerbose})
+		if werr != nil {
+			log.Printf("Watcher disabled: %v", werr)
+			watchMgr = nil
+		}
+	} else {
+		log.Printf("Watcher disabled by flag")
+	}
+
 	// Initialize handlers
-	scanHdlr := scanHandler.NewHandler(scanSvc, scanner)
+	scanHdlr := scanHandler.NewHandler(scanSvc, scanner, watchMgr)
 	err = scanner.Cleanup()
 	if err != nil {
 		log.Fatalf("Failed to cleanup: %v", err)
 	}
 	secretHdlr := secrets.NewHandler(secretsSvc, scanSvc)
+	consHdlr := consumersHandler.NewHandler(scanSvc)
 
 	// Echo instance
 	e := echo.New()
@@ -69,6 +90,9 @@ func main() {
 
 	// Secrets routes
 	apiV1.POST("/secrets/:id/version", secretHdlr.CreateSecretVersionHandler)
+
+	// Consumers routes
+	apiV1.GET("/consumers", consHdlr.ListConsumersHandler)
 
 	// Configure mTLS
 	if *caFile != "" && *certFile != "" && *keyFile != "" {
@@ -93,5 +117,16 @@ func main() {
 		addr := ":" + *port
 		// Start server without TLS
 		e.Logger.Fatal(e.Start(addr))
+	}
+
+	// Signal handler to stop watcher
+	if watchMgr != nil {
+		sigCh := make(chan os.Signal, 1)
+		signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+		go func() {
+			<-sigCh
+			log.Printf("Stopping watcher...")
+			watchMgr.Stop()
+		}()
 	}
 }

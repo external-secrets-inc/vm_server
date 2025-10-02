@@ -3,6 +3,7 @@ package store
 import (
 	"errors"
 	"log"
+	"time"
 	"vm-server/models"
 	"vm-server/store/schema"
 
@@ -26,12 +27,18 @@ func NewStore() (schema.Store, error) {
 
 	log.Println("Database connection established.")
 
-	// Auto-migrate the schema for ScanJob and ScanEntry models.
-	err = db.AutoMigrate(&models.ScanJob{}, &models.ScanEntry{})
+	// Auto-migrate the schema for ScanJob, ScanEntry and Consumer models.
+	err = db.AutoMigrate(&models.ScanJob{}, &models.ScanEntry{}, &models.Consumer{})
 	if err != nil {
 		// Attempt to close the database connection if migration fails.
-		sqlDB, _ := db.DB()
-		sqlDB.Close()
+		sqlDB, dbErr := db.DB()
+		if dbErr != nil {
+			// If we can't get the underlying DB, return the migration error.
+			return nil, err
+		}
+		if closeErr := sqlDB.Close(); closeErr != nil {
+			log.Printf("error closing DB after migration failure: %v", closeErr)
+		}
 		return nil, err
 	}
 
@@ -112,4 +119,35 @@ func (s *StoreGorm) ListScanEntries() ([]models.ScanEntry, error) {
 	var scanEntries []models.ScanEntry
 	result := s.DB.Find(&scanEntries)
 	return scanEntries, result.Error
+}
+
+// UpsertConsumer creates or updates a consumer based on unique tuple.
+func (s *StoreGorm) UpsertConsumer(consumer *models.Consumer) error {
+	var existing models.Consumer
+	tx := s.DB.Where("file_path = ? AND comm = ? AND exe = ? AND ruid = ? AND euid = ?",
+		consumer.FilePath, consumer.Comm, consumer.Exe, consumer.RUID, consumer.EUID).
+		First(&existing)
+	if tx.Error != nil {
+		if errors.Is(tx.Error, gorm.ErrRecordNotFound) {
+			return s.DB.Create(consumer).Error
+		}
+		return tx.Error
+	}
+	existing.UpdatedAt = time.Now()
+	// Keep latest exe/comm if they changed (rare)
+	existing.Comm = consumer.Comm
+	existing.Exe = consumer.Exe
+	return s.DB.Save(&existing).Error
+}
+
+func (s *StoreGorm) ListConsumers(filter *models.ConsumerFilter) ([]models.Consumer, error) {
+	var out []models.Consumer
+	q := s.DB.Model(&models.Consumer{})
+	if filter != nil && filter.FilePath != "" {
+		q = q.Where("file_path = ?", filter.FilePath)
+	}
+	if err := q.Find(&out).Error; err != nil {
+		return nil, err
+	}
+	return out, nil
 }

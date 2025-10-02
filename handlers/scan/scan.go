@@ -6,6 +6,7 @@ import (
 	"vm-server/jobs"
 	"vm-server/models"
 	services "vm-server/services/scan"
+	"vm-server/watcher"
 
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
@@ -15,11 +16,12 @@ import (
 type Handler struct {
 	Service *services.Service
 	Scanner *jobs.Scanner
+	Watcher *watcher.Manager
 }
 
 // NewHandler creates a new scan handler.
-func NewHandler(s *services.Service, sc *jobs.Scanner) *Handler {
-	return &Handler{Service: s, Scanner: sc}
+func NewHandler(s *services.Service, sc *jobs.Scanner, w *watcher.Manager) *Handler {
+	return &Handler{Service: s, Scanner: sc, Watcher: w}
 }
 
 // ScanHandler handles scan related requests.
@@ -39,6 +41,13 @@ func (h *Handler) ScanHandler(c echo.Context) error {
 
 	if err := h.Service.CreateScanJob(newJob); err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to create scan job"})
+	}
+
+	// Activate watcher for requested paths (best-effort)
+	if h.Watcher != nil {
+		for _, p := range req.Paths {
+			_ = h.Watcher.ActivatePath(p)
+		}
 	}
 
 	// Run the scan in the background

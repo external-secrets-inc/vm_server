@@ -60,3 +60,12 @@ func (s *Service) DeleteScanEntry(scanEntry *models.ScanEntry) error {
 func (s *Service) ListScanEntries() ([]models.ScanEntry, error) {
 	return s.Store.ListScanEntries()
 }
+
+// Consumers
+func (s *Service) UpsertConsumer(c *models.Consumer) error {
+	return s.Store.UpsertConsumer(c)
+}
+
+func (s *Service) ListConsumers(filter *models.ConsumerFilter) ([]models.Consumer, error) {
+	return s.Store.ListConsumers(filter)
+}

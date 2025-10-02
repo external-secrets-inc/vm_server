@@ -86,7 +86,7 @@ func (s *Scanner) PerformScan(job *models.ScanJob, req *models.ScanRequest) {
 	// Collect file paths
 	go func() {
 		for _, path := range req.Paths {
-			filepath.WalkDir(path, func(path string, d fs.DirEntry, err error) error {
+			if walkErr := filepath.WalkDir(path, func(path string, d fs.DirEntry, err error) error {
 				if err != nil {
 					log.Printf("Failed to walk directory %s: %v", path, err)
 					return nil // Continue walking
@@ -95,7 +95,9 @@ func (s *Scanner) PerformScan(job *models.ScanJob, req *models.ScanRequest) {
 					filesToScan <- path
 				}
 				return nil
-			})
+			}); walkErr != nil {
+				log.Printf("WalkDir returned error for root %s: %v", path, walkErr)
+			}
 		}
 		close(filesToScan)
 	}()
