@@ -31,8 +31,14 @@ func NewStore() (schema.Store, error) {
 	err = db.AutoMigrate(&models.ScanJob{}, &models.ScanEntry{}, &models.Consumer{})
 	if err != nil {
 		// Attempt to close the database connection if migration fails.
-		sqlDB, _ := db.DB()
-		sqlDB.Close()
+		sqlDB, dbErr := db.DB()
+		if dbErr != nil {
+			// If we can't get the underlying DB, return the migration error.
+			return nil, err
+		}
+		if closeErr := sqlDB.Close(); closeErr != nil {
+			log.Printf("error closing DB after migration failure: %v", closeErr)
+		}
 		return nil, err
 	}
 

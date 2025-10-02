@@ -324,3 +324,10 @@ mv $(1) $(1)-$(3) ;\
 } ;\
 ln -sf $(1)-$(3) $(1)
 endef
+## Lint Go code with golangci-lint
+.PHONY: lint lint-fix
+lint:
+	golangci-lint run --timeout=5m
+
+lint-fix:
+	golangci-lint run --fix --timeout=5m
